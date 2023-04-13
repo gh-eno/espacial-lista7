@@ -1,0 +1,269 @@
+---
+title: "Lista 7 - Estatística Espacial"
+output: html_document
+date: '2023-04-08'
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Ramon Gheno (155118)
+
+# 
+### Os dados a serem analisados são referentes à medidas precipitação no Paraná. O banco de dados está disponível no pacote do INLA.
+### library(INLA)
+### data(PRprec) 
+### dim(PRprec)
+### A primeira e segunda colunas indicam as coordenadas geográficas, a terceira coluna indica a altitude e as demais dados diários de precipitação. Para esse exercício, considere a média anual de precipitação.
+
+
+## Questão 1
+### a)Mapas com a localização das observações
+
+Segue a leitura dos dados, shapefile e posterior geração dos 
+mapas.
+
+```{r}
+#library(INLA)
+# data(PRprec)
+# precip <- PRprec
+#write.csv(precip, "precip.csv", row.names=FALSE)
+#pacotes 
+library(readr)
+library(leaflet)
+library(leaflet.extras)
+library(RSocrata)
+library(sf)
+library(sp)
+library(rgdal)
+library(prevR)
+library(dplyr)
+library(gstat)
+library(geoR)
+library(spatstat)
+
+#leitura do banco
+pr <- read.csv(file = "C:/Users/beta/Documents/espacial/esp_lista7/precip3.csv")
+pr <- pr %>% na.omit()
+
+#organizacao dos dados
+pr <- pr %>% transmute(
+  Latitude, 
+  Longitude,
+  Altitude,
+  Media
+) %>%
+  na.omit() %>% filter(Latitude > - 180) %>% filter(Longitude > - 180) 
+
+curitiba_lat <- -25.4191
+curitiba_lon <- -49.2654
+
+#shapefile
+#https://geonode.paranagua.pr.gov.br/layers/geonode:a__031_004_limitesMunicipaisPR_IAT
+
+pr_sf <- st_read('C:/Users/beta/Documents/espacial/esp_lista7/a__031_004_limitesMunicipaisPR_IAT.shp', quiet = F) # shapefile 
+
+sf_as_sp <- as_Spatial(pr_sf)
+
+#Mapa 1
+
+# paleta
+pal <- colorNumeric(palette = "Media", domain = pr$Media)
+
+leaflet(sf_as_sp) %>%
+  addTiles() %>%
+  setView(lng = -49.2654, lat = -25.4191, zoom = 6) %>%
+  addPolygons(color = pal(pr$Media), stroke = 1, opacity = 0.8)
+
+
+#mapa 2
+leaflet() %>%
+  setView(lng =curitiba_lon, lat = curitiba_lat, zoom = 5) %>%
+  addProviderTiles(provider = "Esri.WorldStreetMap") %>%
+  addCircleMarkers(
+    data=pr,
+    radius = ~ (pr$Media)*2,
+    stroke = FALSE, fillOpacity = 0.5,
+  )
+
+
+```
+
+##b) Análise exploratória dos dados, avalie a distribuição da variável media de precipitação e elevação, faça uma comparação entre esses valores e as coordenadas geográficas das observações.
+
+Os dados forma avaliados por histogramas e boxplots, a variável precipitação apresenta uma distribuição similar a exponencial e a altitude similar a normal. A comparação entre os valores foi realizada através de uma grafico de correlação e correlação de Pearson. 
+
+```{r}
+summary(pr)
+hist(pr$Media)
+boxplot(pr$Media)
+hist(pr$Altitude)
+boxplot(pr$Altitude)
+cor(pr$Altitude, pr$Media)
+
+# Creating the plot
+plot(pr$Altitude, pr$Media, pch = 19, col = "lightblue")
+
+# Regression line
+abline(lm(pr$Media ~ pr$Altitude), col = "red", lwd = 3)
+
+# Pearson correlation
+cor(pr$Altitude, pr$Media)
+
+
+```
+
+### c) Faça um plot da diferença entre os valores observados, dado a distância entre os pares de observações (variogram cloud), avalie se essa nuvem de pontos indica a presença de outliers.
+
+A diferença entre os valores observados e as distâncias foi avaliada pelo gráfico da função G. A avaliação tanto dos itens b) quanto c) indicam a presença de outliers.
+
+```{r}
+#comparacao entre a media e as coordenadas geograficas - avaliacao de PPH atraves da funcao G
+
+points <- as.data.frame(pr[,c("Latitude", "Longitude")])
+points <-as.ppp(points, W = list("type" = 'rectangle', xrange = c(-26,-23), yrange = c(-52,-49)))
+r <- seq(0, 0.5, by = 0.005)
+G_points <- envelope(points, fun = Gest, r = r, nrank = 2, nsim = 99)
+plot(G_points)
+
+#c - grafico
+
+library(ggplot2)
+ggplot(pr) +
+  geom_histogram(aes(x = Media), binwidth = 0.05, bins = 0.1, fill = "#FB6A4A", col = "grey") +
+  labs(x = "Media", y = "Contagem", title = "Histograma Media da precipitação em milímetros") + scale_colour_brewer(palette = "Dark2")
+
+
+```
+
+### d) Estime o semivariograma, para as funções de covariância exponencial, esférica e gaussiana. Interprete os parâmetros estimados de sill, range e efeito pepita da função de covariância exponencial.
+
+Abaixo seguem as estimativas para o semivariograma exponencial, esferico e gaussiano.
+
+```{r}
+est.var <- variogram((Media) ~ 1, locations = ~Longitude + Latitude, data = pr)
+est.var
+plot(est.var)
+
+#variograma teorico exponencial
+var.exp <- fit.variogram(est.var, vgm(model = "Sph"))
+var.exp
+plot(est.var, var.exp)
+
+#variograma teorico esferico
+var.esf <- fit.variogram(est.var, vgm(.6, "Sph", 3, .1))
+var.esf
+plot(est.var, var.esf)
+
+#variograma teorico gaussiano
+var.normal <- fit.variogram(est.var, vgm(.6, "Gau", 3, .1))
+var.normal
+plot(est.var, var.normal)
+
+print(var.exp)
+
+```
+
+
+Em relação ao semivariograma exponencial:
+
+- psill: é a sill parcial, definida como a diferença entre a sill e o nugget (efeito pepita). Como o efeito pepita foi estimado como zero, temos que a psill é igual a sill. A sill é a variância do processo, portanto 0.53 é a variância máxima entre os valores observados.
+
+
+- range: é a distância a partir da qual os pontos observados são independentes. Assim, estima-se que para locais com uma distância maior ou igual a 0,1 a precipitação de chuva seja independente;
+
+- efeito pepita: é o valor do variograma (ou semivariograma) para uma distância entre duas localizações igual a zero. É um efeito em pequena escala. Como ele foi estimado em zero, é como se esse efeito em pequena escala fosse nulo.
+
+
+### e) Calcule o os parâmetros da função de covariância exponencial por meio da função _likfit_ do pacote geoR, considere um modelo com e outro sem a covariável altitude. Compare com os resultados da letra d.
+
+```{r}
+dados <- data.frame(pr$Latitude, pr$Longitude, pr$Media)
+
+dados2geo <- as.geodata(dados)
+
+lf <- likfit(dados2geo, coords = dados2geo[[1]], data = dados2geo[[2]], ini.cov.pars  = c(0.5323253, 1.115499), nug = .01)
+
+plot(variog(dados2geo, coords = dados2geo[[1]], data = dados2geo[[2]]), col = "#CB181D")
+lines(lf, col = "#CB181D")
+
+knitr::kable(data.frame(modelo = lf$cov.model, mu = lf$beta, pepita = lf$nugget, psill = lf$sigmasq, range = lf$phi))
+
+```
+O modelo usando a verossimilhança produz estimativas diferentes para o range e o partial sill.
+
+Podemos observar que a sill (que é a variância máxima entre as observações) diminui quando aplicado o likfit e o range (a distância na qual não há mais correlação entre as observações) aumenta.
+
+
+### f) Faça a predição da superfície de chuva, não considere nenhuma covariável nessa estimativa. Plote o mapa de calor das estimativas e de suas variâncias. Dica: função polygrid.
+
+Contrução de um modelo preditivo e Heatmap não preditivo.
+
+```{r}
+library(spmodel)
+
+spmod <- splm(Media ~ Latitude + Longitude,
+              data = pr,
+              spcov_type = "exponential", xcoord = Latitude, ycoord = Longitude
+)
+plot(spmod)
+plot(spmod, which = c(1, 2, 4, 6))
+
+#predicao GLM
+# library(terra)
+# prec <- rast(pr, type="", crs="", digits=6, extent=NULL)
+# 
+# #build a model, here with glm
+# model <- glm(formula=Media ~ pr$Longitude+pr$Latitude, data=pr)
+# model
+# #predict to a raster
+# # r1 <- predict(prec, model)
+# # plot(r1)
+# 
+# # regressão logistica
+# model <- glm(formula=Media~pr$Longitude+pr$Latitude, data=pr, family="gaussian")
+# 
+# r1log <- predict(prec, model, type="response")
+# 
+# # predfun <- function(model, data) {
+# #   v <- predict(model, data, se.fit=TRUE)
+# #   cbind(p=as.vector(v$fit), se=as.vector(v$se.fit))
+# # }
+# # r2 <- predict(prec, model, fun=predfun)
+# # r2
+# # plot(r2$p)
+# 
+# sr <- values(spatSample(prec, 100, as.raster=TRUE))
+# pca <- prcomp(sr)
+# x <- predict(prec, pca)
+# plot(x)
+
+
+#heatmap
+leaflet(sf_as_sp) %>%
+  addTiles() %>%
+  setView(lng = -49.2654, lat = -25.4191, zoom = 6) %>%
+  addHeatmap(
+    lng = pr$Longitude, lat = pr$Latitude, intensity = "Media",
+    blur = 20, max = 0.05, radius = 15
+  )
+
+```
+
+
+## Questão 2 
+
+### a) Quando os dados são correlacionados e calculamos um teste de hipóteses sem considerar essa característica, há um aumento do erro tipo I? 
+
+Sim, quando os dados são correlacionados e calculamos um teste de hipóteses sem considerar essa característica, há  um aumento do erro tipo I. Isso ocorre porque a correlação entre os dados pode levar a uma superestimação da significância  estatística dos resultados, o que aumenta a probabilidade de rejeitarmos uma hipótese nula verdadeira.
+
+### b) Cite 4 motivos do por que estimar o variograma em vez da função de covariância? 
+
+Existem quatro motivos principais pelos quais são recomendado estimar o variograma em vez da função de covariÂncia:
+
+1. a estacionaridade intrinseca é um pressuposto mais geral do que
+uma estacionariedade de segunda ordem;
+2. o variograma se adapta mais facilmente a observações não estacionarias;
+3. para estimar o variograma, nenhuma estimação da média é necessária;
+4. a estimação do variograma é mais facilmente obtida do que a função de covariância.
